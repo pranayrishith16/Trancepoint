@@ -10,6 +10,7 @@ This decorator:
 """
 
 import functools
+import sys
 import inspect
 import logging
 from typing import Callable, Any, Optional, TypeVar
@@ -21,6 +22,73 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+class MissingAPIKeyError(Exception):
+    """Raised when API key is required but missing."""
+    pass
+
+def get_config_or_fail(
+    config: Optional[Config] = None,
+    allow_disabled: bool = False
+) -> Config:
+    """
+    Get configuration with strict API key validation.
+    
+    For production:
+    - Requires a valid API key
+    - Raises exception if missing
+    - Stops agent execution immediately
+    
+    Args:
+        config: Optional Config instance
+        allow_disabled: If True, allow disabled mode (for testing only)
+    
+    Returns:
+        Config: Valid configuration with API key
+        
+    Raises:
+        MissingAPIKeyError: If no valid API key found
+    """
+    
+    if config is not None:
+        # User provided explicit config
+        if not config.api_key or config.api_key == "sk_dummy_disabled":
+            raise MissingAPIKeyError(
+                "Invalid API key in provided config. "
+                "API key must start with 'sk_' and be non-empty."
+            )
+        return config
+    
+    # Try to load from environment
+    try:
+        final_config = Config.from_env()
+        return final_config
+    except Exception as e:
+        error_msg = (
+            "\n" + "="*70 + "\n"
+            "❌ AGENT OBSERVABILITY INITIALIZATION FAILED\n"
+            "="*70 + "\n\n"
+            "REASON: No valid API key found\n\n"
+            "SOLUTION: Set your API key in one of these ways:\n\n"
+            "1. Environment Variable (Recommended):\n"
+            "   export AGENT_OBS_API_KEY=\"sk_prod_your_key_here\"\n\n"
+            "2. Configuration File:\n"
+            "   Create config.yaml:\n"
+            "   api_key: sk_prod_your_key_here\n"
+            "   api_endpoint: https://api.agentobs.io\n\n"
+            "3. Pass Config to decorator:\n"
+            "   config = Config(api_key=\"sk_prod_your_key_here\")\n"
+            "   @observe(config=config)\n"
+            "   def my_agent(): ...\n\n"
+            "4. Direct decorator parameter:\n"
+            "   @observe(api_key=\"sk_prod_your_key_here\")\n"
+            "   def my_agent(): ...\n\n"
+            f"DETAILS: {str(e)}\n"
+            "="*70 + "\n"
+        )
+        print(error_msg, file=sys.stderr)
+        raise MissingAPIKeyError(error_msg) from e
+
+
 
 def observe(
     config: Optional[Config] = None,
@@ -28,6 +96,7 @@ def observe(
     llm_model: Optional[str] = None,  # ← NEW: Model name (e.g., "gpt-4")
     llm_provider: str = "openai",     # ← NEW: Provider (e.g., "openai", "anthropic")
     enabled: Optional[bool] = None,
+    strict_api_key: bool = True,
 ) -> Callable[[F], F]:
     """
     Decorator for instrumenting agent functions with observability.
@@ -92,71 +161,88 @@ def observe(
     """
     
     def decorator(func: F) -> F:
-        """
-        The actual decorator that wraps the function.
-        
-        Args:
-            func: The function to decorate
-        
-        Returns:
-            Callable: Wrapped function
-        """
-        
-        # Determine config to use
-        if config is None:
-            try:
-                final_config = Config.from_env()
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load Config from environment: {e}. "
-                    f"Observability disabled for {func.__name__}"
-                )
-                # Create disabled config so decorator doesn't break
+        # Get config with strict validation
+        try:
+            final_config = get_config_or_fail(
+                config=config,
+                allow_disabled=(not strict_api_key)
+            )
+        except MissingAPIKeyError as e:
+            if strict_api_key:
+                # Production mode: fail immediately
+                raise
+            else:
+                # Test mode: create disabled config
+                logger.warning(f"API key missing, running in disabled mode: {e}")
                 final_config = Config(
                     api_key="sk_dummy_disabled",
                     enabled=False
                 )
-        else:
-            final_config = config
         
         # Override enabled if specified
         if enabled is not None:
-            config_dict = final_config.to_dict()
+            config_dict = final_config.model_dump()
             config_dict["enabled"] = enabled
             final_config = Config(**config_dict)
         
         final_agent_name = agent_name or func.__name__
-        
-        # Check if async
         is_async = inspect.iscoroutinefunction(func)
         
         if is_async:
-            # Async function wrapper
             @functools.wraps(func)
             async def async_wrapper(*args, **kwargs) -> Any:
-                """Async wrapper that tracks execution with token counting."""
                 wrapped_func = wrap_agent_function(
                     func,
                     final_config,
                     agent_name=final_agent_name,
-                    llm_model=llm_model,           # ← Pass to wrapper
-                    llm_provider=llm_provider,     # ← Pass to wrapper
+                    llm_model=llm_model,
+                    llm_provider=llm_provider,
                 )
-                # wrapped_func is still async, can await it
                 return await wrapped_func(*args, **kwargs)
-            
             return async_wrapper  # type: ignore
-        
         else:
-            # Sync function wrapper
             wrapped_func = wrap_agent_function(
                 func,
                 final_config,
                 agent_name=final_agent_name,
-                llm_model=llm_model,              # ← Pass to wrapper
-                llm_provider=llm_provider,        # ← Pass to wrapper
+                llm_model=llm_model,
+                llm_provider=llm_provider,
             )
-            return wrapped_func  # type: ignore
+            return wrapped_func 
+    
+    return decorator
+
+
+def observe_v2(
+    api_key: Optional[str] = None,  # NEW: Direct API key parameter
+    config: Optional[Config] = None,
+    agent_name: Optional[str] = None,
+    llm_model: Optional[str] = None,
+    llm_provider: str = "openai",
+    enabled: Optional[bool] = None,
+) -> Callable[[F], F]:
+    """
+    Enhanced @observe with direct API key parameter.
+    
+    Usage:
+        @observe_v2(api_key="sk_prod_xyz")
+        def my_agent(): ...
+    
+    Or from environment:
+        @observe_v2()  # Reads AGENT_OBS_API_KEY
+    """
+    
+    def decorator(func: F) -> F:
+        # Priority: explicit api_key > config > environment
+        if api_key:
+            final_config = Config(api_key=api_key)
+        elif config:
+            final_config = config
+        else:
+            final_config = get_config_or_fail()  # This will raise if missing
+        
+        # ... rest of decorator logic
+        return func
     
     return decorator
 

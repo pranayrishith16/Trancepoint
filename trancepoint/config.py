@@ -213,76 +213,46 @@ class Config(BaseModel):
     @classmethod
     def from_env(cls, **overrides) -> "Config":
         """
-        Create configuration from environment variables.
+        Load configuration from environment variables.
         
-        Environment variable naming convention:
-        - AGENT_OBS_API_KEY → api_key
-        - AGENT_OBS_API_ENDPOINT → api_endpoint
-        - AGENT_OBS_AGENT_NAME → agent_name
-        - AGENT_OBS_BATCH_SIZE → batch_size
-        - AGENT_OBS_FLUSH_INTERVAL_SECONDS → flush_interval_seconds
-        - AGENT_OBS_TIMEOUT_SECONDS → timeout_seconds
-        - AGENT_OBS_ENABLED → enabled
-        - AGENT_OBS_DEBUG → debug
+        Required:
+        - AGENT_OBS_API_KEY: Must be set (starts with 'sk_')
         
-        Args:
-            **overrides: Constructor arguments that override environment variables
-        
-        Returns:
-            Config: Configuration object
-        
-        Raises:
-            ValueError: If api_key (required) is not provided
-        
-        Example:
-            # Method 1: Load from environment
-            config = Config.from_env()
-            # Looks for AGENT_OBS_API_KEY, AGENT_OBS_BATCH_SIZE, etc.
-            
-            # Method 2: Load from environment with overrides
-            config = Config.from_env(
-                api_key="sk_override_123",
-                batch_size=5
-            )
-            # Overrides take precedence over environment variables
+        Optional:
+        - AGENT_OBS_API_ENDPOINT (default: https://api.agentobs.io)
+        - AGENT_OBS_BATCH_SIZE (default: 10)
+        - AGENT_OBS_FLUSH_INTERVAL (default: 5)
+        - AGENT_OBS_TIMEOUT (default: 5)
+        - AGENT_OBS_ENABLED (default: true)
+        - AGENT_OBS_DEBUG (default: false)
         """
+        api_key = os.getenv("AGENT_OBS_API_KEY", "").strip()
         
-        # Map environment variable names to field names
-        env_mapping = {
-            "AGENT_OBS_API_KEY": "api_key",
-            "AGENT_OBS_API_ENDPOINT": "api_endpoint",
-            "AGENT_OBS_AGENT_NAME": "agent_name",
-            "AGENT_OBS_BATCH_SIZE": "batch_size",
-            "AGENT_OBS_FLUSH_INTERVAL_SECONDS": "flush_interval_seconds",
-            "AGENT_OBS_TIMEOUT_SECONDS": "timeout_seconds",
-            "AGENT_OBS_ENABLED": "enabled",
-            "AGENT_OBS_DEBUG": "debug",
-        }
+        if not api_key:
+            raise ValueError(
+                "AGENT_OBS_API_KEY environment variable not set.\n"
+                "Set it with: export AGENT_OBS_API_KEY='sk_prod_xxx'"
+            )
         
-        # Extract values from environment
-        env_values = {}
-        for env_var, field_name in env_mapping.items():
-            value = os.getenv(env_var)
-            if value is not None:
-                # Convert string to appropriate type
-                if field_name in ("batch_size", "timeout_seconds", "flush_interval_seconds"):
-                    try:
-                        env_values[field_name] = int(value)
-                    except ValueError:
-                        raise ValueError(
-                            f"Environment variable {env_var} must be an integer, got '{value}'"
-                        )
-                elif field_name in ("enabled", "debug"):
-                    # Convert to boolean: "true", "1", "yes" → True
-                    env_values[field_name] = value.lower() in ("true", "1", "yes", "on")
-                else:
-                    env_values[field_name] = value
+        if not api_key.startswith("sk_"):
+            raise ValueError(
+                f"Invalid API key format. Must start with 'sk_', got: {api_key[:15]}..."
+            )
         
-        # Merge: overrides have highest priority
-        config_data = {**env_values, **overrides}
-        
-        # Create and return
-        return cls(**config_data)
+        return cls(
+            api_key=api_key,
+            api_endpoint=os.getenv(
+                "AGENT_OBS_API_ENDPOINT", 
+                "https://api.agentobs.io"
+            ),
+            batch_size=int(os.getenv("AGENT_OBS_BATCH_SIZE", "10")),
+            flush_interval_seconds=int(os.getenv("AGENT_OBS_FLUSH_INTERVAL", "5")),
+            timeout_seconds=int(os.getenv("AGENT_OBS_TIMEOUT", "5")),
+            enabled=os.getenv("AGENT_OBS_ENABLED", "true").lower() == "true",
+            debug=os.getenv("AGENT_OBS_DEBUG", "false").lower() == "true",
+            **overrides
+        )
+
     
     @classmethod
     def from_file(cls, filepath: str, **overrides) -> "Config":
