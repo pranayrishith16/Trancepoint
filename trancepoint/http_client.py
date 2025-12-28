@@ -5,10 +5,110 @@ import time
 from typing import Optional, List
 from datetime import datetime
 
-from trancepoint.models import Event, EventBatch
+from trancepoint.models import Event, EventBatch, KeyVerificationRequest, KeyVerificationResponse
 from trancepoint.config import Config
 
 logger = logging.getLogger(__name__)
+
+class AccessKeyInvalidError(Exception):
+    """Raised when API key is invalid."""
+    pass
+
+
+class NetworkError(Exception):
+    """Raised when network request fails."""
+    pass
+
+class KeyVerifier:
+    """Verifies API key with backend."""
+    
+    def __init__(self, config: Config):
+        """Initialize verifier."""
+        self.config = config
+        self._verified = False
+        self._verification_time = None
+    
+    def verify(self) -> bool:
+        """
+        Verify Access key with backend.
+        
+        Makes synchronous HTTP request to verify key.
+        Stops execution if key is invalid or network fails.
+        
+        Returns:
+            bool: True if valid
+        
+        Raises:
+            APIKeyInvalidError: If key is invalid
+            NetworkError: If network request fails
+        """
+        if self._verified:
+            return True
+        
+        try:
+            with httpx.Client(
+                timeout=self.config.timeout_seconds
+            ) as client:
+                request = KeyVerificationRequest(access_key=self.config.access_key)
+                
+                response = client.post(
+                    f"{self.config.api_endpoint}/v1/verify-key",
+                    json=request.model_dump(),
+                    headers={
+                        "X-API-Key": self.config.access_key,
+                        "Content-Type": "application/json",
+                    },
+                )
+                
+                if response.status_code == 200:
+                    result = KeyVerificationResponse(**response.json())
+                    if not result.valid:
+                        raise AccessKeyInvalidError(
+                            f"API key is invalid: {result.message or 'Unknown error'}"
+                        )
+                    
+                    self._verified = True
+                    self._verification_time = datetime.now()
+                    logger.info(
+                        f"✓ API key verified successfully "
+                        f"(Plan: {result.plan}, Org: {result.organization})"
+                    )
+                    return True
+                
+                elif response.status_code == 401:
+                    raise AccessKeyInvalidError(
+                        "API key is invalid or expired. "
+                        "Please check your AGENT_OBS_API_KEY."
+                    )
+                
+                else:
+                    raise NetworkError(
+                        f"Unexpected response from backend: "
+                        f"Status {response.status_code}, "
+                        f"Body: {response.text[:200]}"
+                    )
+        
+        except httpx.TimeoutException:
+            raise NetworkError(
+                f"Connection timeout after {self.config.timeout_seconds}s. "
+                "Please check your network connection or increase timeout."
+            )
+        
+        except httpx.ConnectError as e:
+            raise NetworkError(
+                f"Cannot connect to backend at {self.config.api_endpoint}. "
+                f"Error: {str(e)[:100]}"
+            )
+        
+        except httpx.NetworkError as e:
+            raise NetworkError(
+                f"Network error: {str(e)[:100]}"
+            )
+    
+    def is_verified(self) -> bool:
+        """Check if key has been verified."""
+        return self._verified
+
 
 # ============== ASYNC HTTP CLIENT =================
 

@@ -33,6 +33,32 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+class ExecutionContext:
+    """
+    Context for multi-agent execution linkage.
+    
+    Allows main agents to track execution of sub-agents
+    using the same trace_id.
+    """
+    
+    def __init__(self, trace_id: Optional[str] = None):
+        """Initialize context with optional parent trace_id."""
+        self.trace_id = trace_id or generate_trace_id()
+        self.parent_agent = None
+        self.sub_agents = []
+    
+    def add_sub_agent(self, agent_name: str):
+        """Register a sub-agent."""
+        self.sub_agents.append(agent_name)
+    
+    def __enter__(self):
+        """Enter context manager."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager."""
+        pass
+
 
 def wrap_agent_function(
     agent_function: F,

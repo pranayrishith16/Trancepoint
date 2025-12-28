@@ -270,9 +270,9 @@ class EventBatch(BaseModel):
         # }
     """
     
-    api_key: str = Field(
+    access_key: str = Field(
         ...,  # Required
-        description="API key for authentication",
+        description="Access key for authentication",
         min_length=1
     )
     
@@ -303,6 +303,38 @@ class EventBatch(BaseModel):
         """Number of failed events"""
         return sum(1 for e in self.events if e.is_error)
     
+class KeyVerificationRequest(BaseModel):
+    """Request to verify API key validity."""
+    
+    access_key: str = Field(
+        ...,
+        description="Access key to verify",
+    )
+
+class KeyVerificationResponse(BaseModel):
+    """Response from API key verification."""
+    
+    valid: bool = Field(
+        ...,
+        description="Whether Access key is valid",
+    )
+    
+    organization: Optional[str] = Field(
+        default=None,
+        description="Organization name",
+    )
+    
+    plan: Optional[str] = Field(
+        default=None,
+        description="Plan type (free, pro, enterprise)",
+    )
+    
+    message: Optional[str] = Field(
+        default=None,
+        description="Additional message",
+    )
+
+
 
 class Execution(BaseModel):
     """

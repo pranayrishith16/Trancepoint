@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+class ObservabilityError(Exception):
+    """Base error for observability system."""
+    pass
+
+
+class InitializationError(ObservabilityError):
+    """Raised during initialization failure."""
+    pass
+
 class MissingAPIKeyError(Exception):
     """Raised when API key is required but missing."""
     pass
@@ -51,7 +60,7 @@ def get_config_or_fail(
     
     if config is not None:
         # User provided explicit config
-        if not config.api_key or config.api_key == "sk_dummy_disabled":
+        if not config.access_key or config.access_key == "sk_dummy_disabled":
             raise MissingAPIKeyError(
                 "Invalid API key in provided config. "
                 "API key must start with 'sk_' and be non-empty."
@@ -213,134 +222,134 @@ def observe(
     return decorator
 
 
-def observe_v2(
-    api_key: Optional[str] = None,  # NEW: Direct API key parameter
-    config: Optional[Config] = None,
-    agent_name: Optional[str] = None,
-    llm_model: Optional[str] = None,
-    llm_provider: str = "openai",
-    enabled: Optional[bool] = None,
-) -> Callable[[F], F]:
-    """
-    Enhanced @observe with direct API key parameter.
+# def observe_v2(
+#     api_key: Optional[str] = None,  # NEW: Direct API key parameter
+#     config: Optional[Config] = None,
+#     agent_name: Optional[str] = None,
+#     llm_model: Optional[str] = None,
+#     llm_provider: str = "openai",
+#     enabled: Optional[bool] = None,
+# ) -> Callable[[F], F]:
+#     """
+#     Enhanced @observe with direct API key parameter.
     
-    Usage:
-        @observe_v2(api_key="sk_prod_xyz")
-        def my_agent(): ...
+#     Usage:
+#         @observe_v2(api_key="sk_prod_xyz")
+#         def my_agent(): ...
     
-    Or from environment:
-        @observe_v2()  # Reads AGENT_OBS_API_KEY
-    """
+#     Or from environment:
+#         @observe_v2()  # Reads AGENT_OBS_API_KEY
+#     """
     
-    def decorator(func: F) -> F:
-        # Priority: explicit api_key > config > environment
-        if api_key:
-            final_config = Config(api_key=api_key)
-        elif config:
-            final_config = config
-        else:
-            final_config = get_config_or_fail()  # This will raise if missing
+#     def decorator(func: F) -> F:
+#         # Priority: explicit api_key > config > environment
+#         if api_key:
+#             final_config = Config(api_key=api_key)
+#         elif config:
+#             final_config = config
+#         else:
+#             final_config = get_config_or_fail()  # This will raise if missing
         
-        # ... rest of decorator logic
-        return func
+#         # ... rest of decorator logic
+#         return func
     
-    return decorator
+#     return decorator
 
 
-def observe_class(
-    config: Optional[Config] = None,
-    enabled: Optional[bool] = None,
-) -> Callable:
-    """
-    Decorator for instrumenting all methods of a class.
+# def observe_class(
+#     config: Optional[Config] = None,
+#     enabled: Optional[bool] = None,
+# ) -> Callable:
+#     """
+#     Decorator for instrumenting all methods of a class.
     
-    This applies the @observe decorator to all public methods of a class.
-    Useful for instrumenting entire agent classes or tool classes.
+#     This applies the @observe decorator to all public methods of a class.
+#     Useful for instrumenting entire agent classes or tool classes.
     
-    Args:
-        config: Config instance. If None, loads from environment.
-        enabled: Override config.enabled setting.
+#     Args:
+#         config: Config instance. If None, loads from environment.
+#         enabled: Override config.enabled setting.
     
-    Returns:
-        Callable: Decorator function
+#     Returns:
+#         Callable: Decorator function
     
-    Example:
-        from agent_observability.decorator import observe_class
+#     Example:
+#         from agent_observability.decorator import observe_class
         
-        @observe_class()
-        class ResearchAgent:
-            def search(self, query: str) -> list:
-                return ["paper1", "paper2"]
+#         @observe_class()
+#         class ResearchAgent:
+#             def search(self, query: str) -> list:
+#                 return ["paper1", "paper2"]
             
-            def analyze(self, papers: list) -> dict:
-                return {"count": len(papers)}
+#             def analyze(self, papers: list) -> dict:
+#                 return {"count": len(papers)}
         
-        agent = ResearchAgent()
-        results = agent.search("AI")       # Tracked!
-        analysis = agent.analyze(results)  # Tracked!
+#         agent = ResearchAgent()
+#         results = agent.search("AI")       # Tracked!
+#         analysis = agent.analyze(results)  # Tracked!
     
-    Note:
-        - Skips private methods (starting with _)
-        - Skips special methods (__init__, __str__, etc.)
-        - Skips static methods and class methods
-    """
+#     Note:
+#         - Skips private methods (starting with _)
+#         - Skips special methods (__init__, __str__, etc.)
+#         - Skips static methods and class methods
+#     """
     
-    def class_decorator(cls):
-        """Decorate all methods of a class."""
+#     def class_decorator(cls):
+#         """Decorate all methods of a class."""
         
-        if config is None:
-            try:
-                final_config = Config.from_env()
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load Config from environment: {e}. "
-                    f"Observability disabled for {cls.__name__}"
-                )
-                final_config = Config(
-                    api_key="sk_dummy_disabled",
-                    enabled=False
-                )
-        else:
-            final_config = config
+#         if config is None:
+#             try:
+#                 final_config = Config.from_env()
+#             except Exception as e:
+#                 logger.warning(
+#                     f"Failed to load Config from environment: {e}. "
+#                     f"Observability disabled for {cls.__name__}"
+#                 )
+#                 final_config = Config(
+#                     api_key="sk_dummy_disabled",
+#                     enabled=False
+#                 )
+#         else:
+#             final_config = config
         
-        # Override enabled if specified
-        if enabled is not None:
-            config_dict = final_config.to_dict()
-            config_dict["enabled"] = enabled
-            final_config = Config(**config_dict)
+#         # Override enabled if specified
+#         if enabled is not None:
+#             config_dict = final_config.to_dict()
+#             config_dict["enabled"] = enabled
+#             final_config = Config(**config_dict)
         
-        for attr_name in dir(cls):
-            # Skip private/special methods
-            if attr_name.startswith("_"):
-                continue
+#         for attr_name in dir(cls):
+#             # Skip private/special methods
+#             if attr_name.startswith("_"):
+#                 continue
             
-            # Get the attribute
-            try:
-                attr = getattr(cls, attr_name)
-            except AttributeError:
-                continue
+#             # Get the attribute
+#             try:
+#                 attr = getattr(cls, attr_name)
+#             except AttributeError:
+#                 continue
             
-            # Skip non-callables
-            if not callable(attr):
-                continue
+#             # Skip non-callables
+#             if not callable(attr):
+#                 continue
             
-            # Skip static/class methods
-            if isinstance(inspect.getattr_static(cls, attr_name), (staticmethod, classmethod)):
-                continue
+#             # Skip static/class methods
+#             if isinstance(inspect.getattr_static(cls, attr_name), (staticmethod, classmethod)):
+#                 continue
             
-            # Create agent name for this method
-            method_agent_name = f"{cls.__name__}.{attr_name}"
+#             # Create agent name for this method
+#             method_agent_name = f"{cls.__name__}.{attr_name}"
             
-            # Decorate the method
-            decorated = observe(
-                config=final_config,
-                agent_name=method_agent_name,
-                enabled=enabled
-            )(attr)
+#             # Decorate the method
+#             decorated = observe(
+#                 config=final_config,
+#                 agent_name=method_agent_name,
+#                 enabled=enabled
+#             )(attr)
             
-            # Set the decorated method back on the class
-            setattr(cls, attr_name, decorated)
+#             # Set the decorated method back on the class
+#             setattr(cls, attr_name, decorated)
         
-        return cls
+#         return cls
     
-    return class_decorator
+#     return class_decorator

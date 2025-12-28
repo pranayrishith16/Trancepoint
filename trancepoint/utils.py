@@ -63,6 +63,8 @@ def generate_timestamp_ms() -> int:
     """
     return int(time.time() * 1000)
 
+# =============== FORMATTING ================
+
 def format_input(*args, **kwargs) -> str:
     """
     Format function arguments as a string for event input_text.
@@ -101,7 +103,11 @@ def format_input(*args, **kwargs) -> str:
     # Format args if provided
     if args:
         try:
-            args_str = _format_object(args, max_length=400)
+            args_str = json.dumps(
+                args, 
+                default=_json_serializer, 
+                indent=None
+                )
             parts.append(f"args: {args_str}")
         except Exception as e:
             logger.warning(f"Error formatting args: {e}")
@@ -110,7 +116,11 @@ def format_input(*args, **kwargs) -> str:
     # Format kwargs if provided
     if kwargs:
         try:
-            kwargs_str = _format_object(kwargs, max_length=400)
+            kwargs_str = json.dumps(
+                kwargs, 
+                default=_json_serializer, 
+                indent=None
+            )
             parts.append(f"kwargs: {kwargs_str}")
         except Exception as e:
             logger.warning(f"Error formatting kwargs: {e}")
@@ -218,108 +228,11 @@ def format_error(error: Exception) -> tuple[str, str]:
     
     return error_message, error_type
 
-# Internal helpers
-
-def _format_object(obj: Any, max_length: int = 400) -> str:
-    """
-    Format a Python object to string, respecting max_length.
-    
-    Used internally by format_input/format_output.
-    
-    Args:
-        obj: Object to format
-        max_length: Maximum string length (default 400)
-    
-    Returns:
-        str: Formatted object string
-    """
-    try:
-        # Try JSON serialization first (works for dicts, lists, etc.)
-        formatted = json.dumps(obj, default=_json_serializer, indent=None)
-    except (TypeError, ValueError):
-        # Fall back to str() for unprintable objects
-        formatted = repr(obj)
-    
-    # Truncate if needed
-    if len(formatted) > max_length:
-        formatted = formatted[:max_length - 3] + "..."
-    
-    return formatted
-
-def _json_serializer(obj: Any) -> str:
-    """
-    JSON serializer for objects not serializable by default json code.
-    
-    Called by json.dumps() when it encounters non-standard types.
-    
-    Handles:
-    - datetime objects
-    - bytes objects
-    - UUID objects
-    - Custom objects (uses __dict__ if available)
-    
-    Args:
-        obj: Object to serialize
-    
-    Returns:
-        str: String representation for JSON
-    
-    Raises:
-        TypeError: If object cannot be serialized
-    """
-    # Handle datetime
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    
-    # Handle bytes
-    if isinstance(obj, bytes):
-        return obj.decode('utf-8', errors='replace')
-    
-    # Handle UUID
-    if isinstance(obj, uuid.UUID):
-        return str(obj)
-    
-    # Handle custom objects with __dict__
-    if hasattr(obj, '__dict__'):
-        return obj.__dict__
-    
-    # Can't serialize
-    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-def truncate_string(text: str, max_length: int = 500, suffix: str = "...") -> str:
-    """
-    Safely truncate a string to max length with suffix.
-    
-    Used to ensure strings fit within database/API limits.
-    
-    Args:
-        text: String to truncate
-        max_length: Maximum allowed length (default 500)
-        suffix: Suffix to add when truncating (default "...")
-    
-    Returns:
-        str: Truncated string
-    
-    Example:
-        long_text = "x" * 1000
-        truncated = truncate_string(long_text, max_length=100)
-        # Returns: "xxxx...xxxx..." (100 chars total)
-        
-        # Custom suffix
-        truncated = truncate_string(long_text, max_length=50, suffix="[TRUNCATED]")
-        # Returns: "xxxxx[TRUNCATED]" (50 chars total)
-    """
+def truncate_string(text: str, max_length: int = 500) -> str:
+    """Safely truncate string."""
     if len(text) <= max_length:
         return text
-    
-    # Calculate space for actual content
-    available = max_length - len(suffix)
-    
-    if available < 1:
-        # Not enough space for both text and suffix
-        return text[:max_length]
-    
-    return text[:available] + suffix
+    return text[:max_length - 3] + "..."
 
 
 def truncate_dict(data: Dict[str, Any], max_keys: int = 10) -> Dict[str, Any]:
@@ -454,6 +367,20 @@ def calculate_duration_ms(start_ms: int, end_ms: int) -> int:
     # Ensure non-negative (clock skew handling)
     return max(0, duration)
 
+def _json_serializer(obj: Any) -> str:
+    """Custom JSON serializer for non-standard types."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return obj.decode('utf-8', errors='replace')
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if hasattr(obj, '__dict__'):
+        return obj.__dict__
+    
+    raise TypeError(
+        f"Object of type {type(obj).__name__} is not JSON serializable"
+    )
 
 def calculate_percentile(values: List[int], percentile: float) -> float:
     """
